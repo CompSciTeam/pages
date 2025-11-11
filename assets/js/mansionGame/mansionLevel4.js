@@ -2,6 +2,7 @@
 import GameEnvBackground from './GameEngine/GameEnvBackground.js';
 import Player from './GameEngine/Player.js';
 import GameObject from './GameEngine/GameObject.js';
+import DialogueSystem from './GameEngine/DialogueSystem.js';
 
 //Import custom classes from select files
 import Barrier from './CustomGameClasses/Barrier.js';
@@ -16,6 +17,11 @@ class MansionLevel4 {
 
         // Initialize blackjack manager
         this.blackjackManager = new BlackjackGameManager(gameEnv);
+        
+        // Set up win callback for when player wins the blackjack game
+        this.blackjackManager.onWin = () => {
+            this.winLevel();
+        };
         
         // Track if player is in trigger zone
         this.inTriggerZone = false;
@@ -150,7 +156,7 @@ class MansionLevel4 {
             </style>
             <div style="font-size: 48px; margin-bottom: 15px;">🎰</div>
             <h2 style="color: #f39c12; font-size: 32px; margin: 0 0 15px 0; font-weight: bold;">BLACKJACK TABLE</h2>
-            <p style="color: white; font-size: 20px; margin: 10px 0;">Win $25,000 to escape!</p>
+            <p style="color: white; font-size: 20px; margin: 10px 0;">Win $10,000 to escape!</p>
             <div style="margin-top: 25px; padding: 15px; background: #f39c12; border-radius: 10px;">
                 <p style="color: white; font-size: 24px; margin: 0; font-weight: bold;">Press [E] to Enter</p>
             </div>
@@ -173,6 +179,43 @@ class MansionLevel4 {
     update() {
         // Collision detection removed - it was causing player to be stuck
         // The player now moves freely, only blocked by canvas boundaries
+    }
+    
+    winLevel() {
+        console.log("🎉 Level 4 Won!");
+        
+        // Create victory dialogue with key image
+        const dialogueSystem = new DialogueSystem();
+        dialogueSystem.showDialogue(
+            'You won $10,000 at the casino and earned the golden key! Congratulations!',
+            'Victory!',
+            this.gameEnv.path + '/images/mansionGame/key_lvl3.png'
+        );
+        
+        dialogueSystem.addButtons([
+            {
+                text: 'Continue',
+                primary: true,
+                action: () => {
+                    dialogueSystem.closeDialogue();
+                    
+                    // TODO: Transition to next level (Level 5)
+                    // Uncomment when Level 5 is ready
+                    /*
+                    if (this.gameEnv && this.gameEnv.gameControl) {
+                        const gameControl = this.gameEnv.gameControl;
+                        // Import Level 5 at the top: import MansionLevel5 from './mansionLevel5.js';
+                        gameControl.levelClasses = [MansionLevel5];
+                        gameControl.currentLevelIndex = 0;
+                        gameControl.transitionToLevel();
+                    }
+                    */
+                    
+                    // For now, just show a message
+                    alert("Level 4 Complete! (Next level not yet connected)");
+                }
+            }
+        ]);
     }
     
     // Clean up when level is destroyed
