@@ -18,6 +18,19 @@ class GameControl {
         this.currentLevelIndex = 0;
         this.gameLoopCounter = 0;
         this.isPaused = false;
+    // Optional reference to a PauseMenu instance. If set, Escape will toggle it.
+    this.pauseMenu = null;
+    // Optional per-game PauseMenu configuration (passed to the shared PauseMenu by Game.js)
+    // Games can override these values if they want to count a different stat name/label.
+    this.pauseMenuOptions = {
+        counterVar: 'levelsCompleted',
+        counterLabel: 'Levels completed'
+    };
+    // Whether to show per-level counts. We want a single cumulative counter for levels completed.
+    this.pauseMenuOptions.counterPerLevel = false;
+    // use a unique storage key so stats are per-game
+    this.pauseMenuOptions.storageKey = 'pauseMenuStats:adventure';
+    this.skipKeyListener = this.handleSkipKey.bind(this);
         this.exitKeyListener = this.handleExitKey.bind(this);
         this.gameOver = null; // Callback for when the game is over 
         this.savedCanvasState = []; // Save the current levels game elements 
@@ -31,6 +44,7 @@ class GameControl {
     
     start() {
         this.addExitKeyListener();
+        this.addSkipKeyListener();
         this.transitionToLevel();
     }
 
@@ -156,24 +170,57 @@ class GameControl {
      * 3. Transitioning to the next level
      */
     handleLevelEnd() {
-        // Alert the user that the level has ended
-        if (this.currentLevelIndex < this.levelClasses.length - 1) {
-            alert("Level ended.");
-        } else {
-            alert("All levels completed.");
-        }
-        
+        // Increment configured per-game counter (PauseMenu displays this variable).
+        try {
+            const cv = (this.pauseMenuOptions && this.pauseMenuOptions.counterVar) || 'levelsCompleted';
+            const perLevel = (this.pauseMenuOptions && this.pauseMenuOptions.counterPerLevel) || false;
+            if (!this.stats) this.stats = {};
+            if (perLevel) {
+                if (!this.stats.levels) this.stats.levels = {};
+                const levelKey = (typeof this.currentLevelIndex !== 'undefined') ? String(this.currentLevelIndex) : ((this.currentLevel && this.currentLevel.id) || '0');
+                this.stats.levels[levelKey] = (this.stats.levels[levelKey] || 0) + 1;
+            } else {
+                this[cv] = (this[cv] || 0) + 1;
+                this.stats[cv] = this[cv];
+            }
+            if (this.pauseMenu && typeof this.pauseMenu._updateStatsDisplay === 'function') this.pauseMenu._updateStatsDisplay();
+            if (this.pauseMenu && typeof this.pauseMenu._saveStatsToStorage === 'function') this.pauseMenu._saveStatsToStorage();
+        } catch (e) { /* ignore */ }
+
         // Clean up any lingering interaction handlers
         this.cleanupInteractionHandlers();
-        
-        this.currentLevel.destroy();
-        
-        // Call the gameOver callback if it exists
-        if (this.gameOver) {
-            this.gameOver();
+
+        // Destroy current level safely
+        try {
+            if (this.currentLevel && typeof this.currentLevel.destroy === 'function') {
+                this.currentLevel.destroy();
+            }
+        } catch (e) {
+            console.error('Error destroying current level:', e);
+        }
+
+        // If there are more levels, advance. Otherwise finish gracefully.
+        if (this.currentLevelIndex < this.levelClasses.length - 1) {
+            // Inform user and go to next level
+            try { alert("Level ended."); } catch (e) { /* ignore */ }
+            if (this.gameOver) {
+                this.gameOver();
+            } else {
+                this.currentLevelIndex++;
+                this.transitionToLevel();
+            }
         } else {
-            this.currentLevelIndex++;
-            this.transitionToLevel();
+            // Final level completed: prefer game.returnHome() if available,
+            // otherwise call gameOver callback or show a completion message.
+            if (this.game && typeof this.game.returnHome === 'function') {
+                this.game.returnHome();
+            } else if (this.gameOver) {
+                this.gameOver();
+            } else {
+                try { alert("All levels completed."); } catch (e) { /* ignore */ }
+            }
+            // Ensure no dangling currentLevel reference
+            this.currentLevel = null;
         }
     }
 
@@ -183,7 +230,102 @@ class GameControl {
      */
     handleExitKey(event) {
         if (event.key === 'Escape') {
+            // If a PauseMenu has been registered, toggle it. Do NOT end level from Escape.
+            if (this.pauseMenu) {
+                try {
+                    const isHidden = this.pauseMenu.container && this.pauseMenu.container.getAttribute('aria-hidden') === 'true';
+                    if (isHidden) {
+                        this.pause();
+                        if (typeof this.pauseMenu.show === 'function') this.pauseMenu.show();
+                    } else {
+                        if (typeof this.pauseMenu.hide === 'function') this.pauseMenu.hide();
+                        this.resume();
+                    }
+                } catch (e) {
+                    console.warn('Error toggling pause menu:', e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle skip-level key (default: 'L')
+     */
+    handleSkipKey(event) {
+        // Don't interfere with typing in inputs
+        const tag = event.target && event.target.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || event.defaultPrevented) return;
+
+        if (event.key === 'l' || event.key === 'L') {
+            // Call the public API to end/skip the level
+            try {
+                this.endLevel();
+            } catch (e) {
+                console.warn('Error skipping level via L key:', e);
+            }
+        }
+    }
+
+    addSkipKeyListener() {
+        document.addEventListener('keydown', this.skipKeyListener);
+    }
+
+    removeSkipKeyListener() {
+        document.removeEventListener('keydown', this.skipKeyListener);
+    }
+
+    /**
+     * End the current level (public API)
+     */
+    endLevel() {
+        if (this.currentLevel) {
             this.currentLevel.continue = false;
+        }
+    }
+
+    /**
+     * Increment an arbitrary stat on this GameControl (keeps PauseMenu in sync if present)
+     */
+    incrementStat(statName, amount = 1) {
+        try {
+            this[statName] = (this[statName] || 0) + Number(amount || 0);
+            if (this.stats) this.stats[statName] = this[statName];
+            if (this.pauseMenu && typeof this.pauseMenu._updateStatsDisplay === 'function') this.pauseMenu._updateStatsDisplay();
+            if (this.pauseMenu && typeof this.pauseMenu._saveStatsToStorage === 'function') this.pauseMenu._saveStatsToStorage();
+        } catch (e) {
+            console.warn('incrementStat error', e);
+        }
+    }
+
+    addPoints(amount = 0) {
+        try {
+            this.points = (this.points || 0) + Number(amount || 0);
+            if (!this.stats) this.stats = { points: this.points };
+            this.stats.points = this.points;
+            if (this.pauseMenu && typeof this.pauseMenu._updateStatsDisplay === 'function') this.pauseMenu._updateStatsDisplay();
+            if (this.pauseMenu && typeof this.pauseMenu._saveStatsToStorage === 'function') this.pauseMenu._saveStatsToStorage();
+        } catch (e) {
+            console.warn('addPoints error', e);
+        }
+    }
+
+    /**
+     * Called by an attached PauseMenu to show the menu (pauses the game)
+     */
+    showPauseMenu() {
+        if (this.pauseMenu && typeof this.pauseMenu.show === 'function') {
+            this.pause();
+            this.pauseMenu.show();
+        }
+    }
+
+    /**
+     * Called by an attached PauseMenu to hide the menu (resumes the game)
+     */
+    hidePauseMenu() {
+        if (this.pauseMenu && typeof this.pauseMenu.hide === 'function') {
+            this.pauseMenu.hide();
+            this.resume();
         }
     }
     
